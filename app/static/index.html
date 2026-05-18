@@ -1,0 +1,396 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Survey Q&A Prototype</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background: #fafafa; }
+      .wrap { max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+      .tabs { display:flex; gap:8px; margin-bottom: 14px; flex-wrap: wrap; }
+      button { padding: 8px 10px; border: 1px solid #ddd; background: white; border-radius: 10px; cursor:pointer; }
+      button.active { background:#111; color:white; border-color:#111; }
+      .card { background: white; border: 1px solid #e7e7e7; border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+      .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .muted { color: #666; font-size: 12px; }
+      input, select { padding: 8px; border: 1px solid #ddd; border-radius: 10px; width: 100%; box-sizing: border-box; }
+      .row { display:flex; gap:10px; align-items: center; }
+      .row > * { flex: 1; }
+      .row .tight { flex: 0 0 auto; width: 140px; }
+      pre { background: #f6f6f6; padding: 10px; border-radius: 12px; overflow:auto; }
+      .item { padding: 10px 0; border-bottom: 1px solid #eee; }
+      .click { cursor: pointer; }
+      .pill { display:inline-block; padding: 2px 8px; border:1px solid #ddd; border-radius: 999px; font-size: 12px; margin-left: 6px; }
+      @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .row { flex-wrap: wrap; } .row .tight { width: 100%; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h2>Survey Questionnaire Q&A Prototype</h2>
+      <div class="muted" id="status"></div>
+
+      <div class="tabs">
+        <button id="tab-ask" class="active" onclick="showTab('ask')">Ask</button>
+        <button id="tab-compare" onclick="showTab('compare')">Compare</button>
+        <button id="tab-library" onclick="showTab('library')">Library</button>
+        <button id="tab-upload" onclick="showTab('upload')">Upload</button>
+        <div style="margin-left:auto; min-width:240px;">
+          <div class="muted">Tenant</div>
+          <input id="tenant" value="default" oninput="refreshDocs()" />
+        </div>
+      </div>
+
+      <div id="view-ask">
+        <div class="grid2">
+          <div class="card">
+            <h3>Ask / Search</h3>
+            <div class="muted">Search finds question wording + options + matrix labels, and shows provenance.</div>
+            <div style="margin-top:10px;">
+              <input id="q" placeholder='e.g., "trust in leadership"' />
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <select id="aud">
+                <option value="">All audiences</option>
+                <option value="member">member</option>
+                <option value="voter">voter</option>
+              </select>
+              <input id="yf" class="tight" placeholder="Year from" />
+              <input id="yt" class="tight" placeholder="Year to" />
+              <button class="tight" onclick="search()">Search</button>
+              <button class="tight" onclick="answer()">Generate</button>
+            </div>
+
+            <div id="gen" style="margin-top:12px;"></div>
+            <div id="results" style="margin-top:12px;"></div>
+          </div>
+
+          <div class="card">
+            <h3>Selected</h3>
+            <div id="selected" class="muted">Click a result to view details + timeline.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="view-compare" style="display:none;">
+        <div class="card">
+          <h3>Compare two years</h3>
+          <div class="muted">Always member-to-member and voter-to-voter only. If audience is blank, you get both buckets.</div>
+          <div class="row" style="margin-top:10px;">
+            <input id="cq" placeholder='e.g., "economic outlook", "favorability", "trust"' />
+            <input id="ya" class="tight" placeholder="Year A" value="2022" />
+            <input id="yb" class="tight" placeholder="Year B" value="2024" />
+            <select id="caud" class="tight">
+              <option value="">Both (separate)</option>
+              <option value="member">member</option>
+              <option value="voter">voter</option>
+            </select>
+            <button class="tight" onclick="compare()">Compare</button>
+          </div>
+          <div id="cmp" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+      <div id="view-library" style="display:none;">
+        <div class="card">
+          <h3>Library</h3>
+          <div id="docs" class="muted">Loading…</div>
+        </div>
+      </div>
+
+      <div id="view-upload" style="display:none;">
+        <div class="card">
+          <h3>Upload</h3>
+          <div class="muted">Prototype supports .docx and .odt.</div>
+          <div class="row" style="margin-top:10px;">
+            <div>
+              <div class="muted">File</div>
+              <input type="file" id="file" />
+            </div>
+            <div>
+              <div class="muted">Audience</div>
+              <select id="uaud">
+                <option value="member">member</option>
+                <option value="voter">voter</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <div>
+              <div class="muted">Survey title</div>
+              <input id="utitle" placeholder="e.g., August Member Survey" />
+            </div>
+            <div class="tight">
+              <div class="muted">Year</div>
+              <input id="uyear" value="2024" />
+            </div>
+            <button class="tight" onclick="upload()">Upload & ingest</button>
+          </div>
+          <div id="umsg" style="margin-top:12px;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      async function api(path) {
+        const r = await fetch(path);
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      }
+      function tenant(){ return document.getElementById('tenant').value.trim() || 'default'; }
+
+      function showTab(name) {
+        for (const t of ['ask','compare','library','upload']) {
+          document.getElementById('view-'+t).style.display = (t===name) ? 'block' : 'none';
+          document.getElementById('tab-'+t).classList.toggle('active', t===name);
+        }
+        if (name==='library') refreshDocs();
+      }
+
+      async function refreshStatus() {
+        try {
+          const s = await api('/health');
+          document.getElementById('status').innerText =
+            `Embeddings: ${s.embeddings ? 'ON' : 'OFF'} • Generation: ${s.generation ? 'ON' : 'OFF'}`;
+        } catch(e) {
+          document.getElementById('status').innerText = 'Server not reachable';
+        }
+      }
+
+      async function refreshDocs() {
+          try {
+            const d = await api('/api/documents?tenant_id=' + encodeURIComponent(tenant()));
+            if (!d.length) {
+              document.getElementById('docs').innerText = 'No documents yet.';
+              return;
+            }
+        
+            const html = d.map(x => `
+              <li style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;">
+                <div>
+                  <b>${x.year}</b> — ${esc(x.title)}
+                  <span class="pill">${esc(x.audience)}</span>
+                  <span class="muted">(${esc(x.filename)})</span>
+                </div>
+                <button class="danger-btn" data-doc-id="${x.id}" data-doc-title="${esc(x.title)}">Delete</button>
+              </li>
+            `).join('');
+        
+            document.getElementById('docs').innerHTML = `<ul>${html}</ul>`;
+        
+            document.querySelectorAll('.danger-btn').forEach(btn => {
+              btn.addEventListener('click', async function () {
+                const id = this.getAttribute('data-doc-id');
+                const title = this.getAttribute('data-doc-title');
+                await deleteDocument(id, title);
+              });
+            });
+        
+          } catch (e) {
+            document.getElementById('docs').innerText = String(e);
+          }
+        }
+
+      async function deleteDocument(id, title) {
+          const ok = confirm(`Delete "${title}"? This will remove it from Library, Ask, and Compare.`);
+          if (!ok) return;
+        
+          try {
+            const r = await fetch('/api/documents/' + id, {
+              method: 'DELETE'
+            });
+        
+            if (!r.ok) {
+              throw new Error(await r.text());
+            }
+        
+            await refreshDocs();
+        
+            const results = document.getElementById('results');
+            const selected = document.getElementById('selected');
+            const gen = document.getElementById('gen');
+            const cmp = document.getElementById('cmp');
+        
+            if (results) results.innerHTML = '';
+            if (selected) selected.innerHTML = '<span class="muted">Click a result to view details + timeline.</span>';
+            if (gen) gen.innerHTML = '';
+            if (cmp) cmp.innerHTML = '';
+          } catch (e) {
+            console.error('Delete failed:', e);
+            alert('Delete failed: ' + e.message);
+          }
+        }
+
+      async function upload() {
+        const f = document.getElementById('file').files[0];
+        if (!f) { alert('Pick a file'); return; }
+        const fd = new FormData();
+        fd.append('file', f);
+        fd.append('title', document.getElementById('utitle').value || f.name);
+        fd.append('year', document.getElementById('uyear').value || '2024');
+        fd.append('audience', document.getElementById('uaud').value);
+        fd.append('tenant_id', tenant());
+
+        document.getElementById('umsg').innerText = 'Uploading & ingesting...';
+        const r = await fetch('/api/upload', { method: 'POST', body: fd });
+        const txt = await r.text();
+        if (!r.ok) { document.getElementById('umsg').innerText = txt; return; }
+        document.getElementById('umsg').innerHTML = '<pre>' + txt + '</pre>';
+        refreshDocs();
+      }
+
+      function esc(s){ return (s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+      async function search() {
+        const q = document.getElementById('q').value.trim();
+        if (!q) return;
+        const aud = document.getElementById('aud').value;
+        const yf = document.getElementById('yf').value.trim();
+        const yt = document.getElementById('yt').value.trim();
+
+        document.getElementById('gen').innerHTML = '';
+        document.getElementById('selected').innerHTML = '<span class="muted">Click a result to view details + timeline.</span>';
+        document.getElementById('results').innerHTML = '<span class="muted">Searching…</span>';
+
+        const params = new URLSearchParams({ q, tenant_id: tenant(), limit: '20' });
+        if (aud) params.set('audience', aud);
+        if (yf) params.set('year_from', yf);
+        if (yt) params.set('year_to', yt);
+
+        try {
+          const res = await api('/api/search?' + params.toString());
+          if (!res.length) {
+            document.getElementById('results').innerHTML = '<span class="muted">No results found.</span>';
+            return;
+          }
+          document.getElementById('results').innerHTML = res.map(r => `
+            <div class="item">
+              <div class="muted">${r.year} • ${esc(r.survey_title)} • <span class="pill">${r.audience}</span> • ${r.question_type} • ${esc(r.source_locator)}</div>
+              <div class="click" onclick="openQuestion(${r.question_id})"><b>${esc(r.question_text)}</b></div>
+              ${r.answer_options && r.answer_options.length ? `<div class="muted">Options: ${esc(r.answer_options.slice(0,6).join(' | '))}${r.answer_options.length>6?' ...':''}</div>`:''}
+              ${r.matrix_rows && r.matrix_rows.length ? `<div class="muted">Matrix rows: ${esc(r.matrix_rows.slice(0,4).join(' | '))}${r.matrix_rows.length>4?' ...':''}</div>`:''}
+            </div>
+          `).join('');
+        } catch (e) {
+          document.getElementById('results').innerHTML = `<div class="card"><b>Search error:</b> ${esc(String(e))}</div>`;
+        }
+      }
+
+      async function openQuestion(id) {
+        const q = await api('/api/question/' + id);
+        const opts = (q.answer_options||[]);
+        const rows = (q.matrix_rows||[]);
+        const cols = (q.matrix_cols||[]);
+        const tl = (q.timeline||[]);
+
+        let html = `
+          <div class="muted">${q.year} • ${esc(q.survey_title)} • <span class="pill">${q.audience}</span> • ${q.question_type}</div>
+          <h4 style="margin:10px 0 6px 0;">${esc(q.question_text)}</h4>
+          <div class="muted">Provenance: ${esc(q.source_locator)}</div>
+          <pre>${esc(q.source_quote||'')}</pre>
+        `;
+
+        if (opts.length) {
+          html += `<div><b>Answer options</b></div><ul>${opts.map(o=>`<li>${esc(o)}</li>`).join('')}</ul>`;
+        }
+        if (rows.length || cols.length) {
+          html += `<div><b>Matrix</b></div><div class="grid2">
+            <div><div class="muted">Rows</div><ul>${rows.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+            <div><div class="muted">Cols</div><ul>${cols.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>
+          </div>`;
+        }
+        if (tl.length > 1) {
+          html += `<h4>Evolution timeline (same canonical; same audience)</h4>`;
+          html += tl.map(t => `
+            <div class="item">
+              <div class="muted">${t.year} • ${esc(t.survey_title)} • ${esc(t.source_locator)}</div>
+              <div><b>${esc(t.question_text)}</b></div>
+              ${t.answer_options && t.answer_options.length ? `<div class="muted">Options: ${esc(t.answer_options.slice(0,6).join(' | '))}${t.answer_options.length>6?' ...':''}</div>`:''}
+            </div>
+          `).join('');
+        }
+        document.getElementById('selected').innerHTML = html;
+      }
+
+      async function answer() {
+        const q = document.getElementById('q').value.trim();
+        if (!q) return;
+        const aud = document.getElementById('aud').value;
+        const yf = document.getElementById('yf').value.trim();
+        const yt = document.getElementById('yt').value.trim();
+        const params = new URLSearchParams({ q, tenant_id: tenant(), k: '10' });
+        if (aud) params.set('audience', aud);
+        if (yf) params.set('year_from', yf);
+        if (yt) params.set('year_to', yt);
+
+        document.getElementById('gen').innerHTML = '<div class="muted">Generating…</div>';
+        try {
+          const res = await api('/api/answer?' + params.toString());
+          let html = `<div class="card" style="margin-top:12px;"><div class="muted">Generated answer (grounded)</div>
+            <div style="white-space:pre-wrap; margin-top:6px;">${esc(res.answer||'')}</div>
+          `;
+          if (res.notes) html += `<div class="muted" style="margin-top:6px;">${esc(res.notes)}</div>`;
+          if (res.citations && res.citations.length) {
+            html += `<div class="muted" style="margin-top:10px;">Citations used</div>`;
+            html += res.citations.slice(0,6).map(c => `
+              <div class="item">
+                <div class="muted">${c.year} • ${esc(c.survey_title)} • <span class="pill">${c.audience}</span> • ${esc(c.source_locator)}</div>
+                <div><b>${esc(c.question_text)}</b></div>
+              </div>
+            `).join('');
+          }
+          html += `</div>`;
+          document.getElementById('gen').innerHTML = html;
+        } catch (e) {
+          document.getElementById('gen').innerHTML = `<div class="card"><b>Error:</b> ${esc(String(e))}</div>`;
+        }
+      }
+
+      async function compare() {
+        const q = document.getElementById('cq').value.trim();
+        if (!q) return;
+        const year_a = document.getElementById('ya').value.trim();
+        const year_b = document.getElementById('yb').value.trim();
+        const aud = document.getElementById('caud').value;
+        const params = new URLSearchParams({ q, year_a, year_b, tenant_id: tenant(), limit: '25' });
+        if (aud) params.set('audience', aud);
+        const res = await api('/api/compare?' + params.toString());
+
+        function renderBucket(name, rows) {
+          if (!rows.length) return `<div class="muted">No ${name} matches.</div>`;
+          return rows.map(r => `
+            <div class="item">
+              <div class="muted">Canonical #${r.canonical_id} • <span class="pill">${r.audience}</span></div>
+              <div class="grid2">
+                <div>
+                  <div class="muted"><b>${r.year_a}</b></div>
+                  ${r.question_a ? `<div><b>${esc(r.question_a.question_text)}</b></div>` : `<div class="muted">Not present</div>`}
+                  ${r.question_a && r.question_a.answer_options && r.question_a.answer_options.length ? `<div class="muted">Options: ${esc(r.question_a.answer_options.slice(0,6).join(' | '))}</div>`:''}
+                </div>
+                <div>
+                  <div class="muted"><b>${r.year_b}</b></div>
+                  ${r.question_b ? `<div><b>${esc(r.question_b.question_text)}</b></div>` : `<div class="muted">Not present</div>`}
+                  ${r.question_b && r.question_b.answer_options && r.question_b.answer_options.length ? `<div class="muted">Options: ${esc(r.question_b.answer_options.slice(0,6).join(' | '))}</div>`:''}
+                </div>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        if (Array.isArray(res)) {
+          document.getElementById('cmp').innerHTML = renderBucket('audience', res);
+        } else {
+          document.getElementById('cmp').innerHTML = `
+            <h4>Member</h4>
+            ${renderBucket('member', res.member || [])}
+            <h4 style="margin-top:14px;">Voter</h4>
+            ${renderBucket('voter', res.voter || [])}
+          `;
+        }
+      }
+
+      refreshStatus();
+      refreshDocs();
+    </script>
+  </body>
+</html>
