@@ -36,8 +36,8 @@ IS_POSTGRES = DATABASE_URL.startswith(("postgresql", "postgres"))
 # OpenAI is only used for answer generation (chat), not embeddings
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+OPENAI_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 CANONICAL_SIM_THRESHOLD = float(os.getenv("CANONICAL_SIM_THRESHOLD", "0.86"))
-LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "all-MiniLM-L6-v2")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -171,31 +171,25 @@ def has_openai() -> bool:
     return bool(OPENAI_API_KEY)
 
 # -------------------------
-# Local embedding model (sentence-transformers, free, no API calls)
+# Embeddings (OpenAI API)
 # -------------------------
-_st_model = None
-_st_lock = Lock()
-
-def get_embed_model():
-    global _st_model
-    if _st_model is None:
-        with _st_lock:
-            if _st_model is None:
-                from sentence_transformers import SentenceTransformer
-                _st_model = SentenceTransformer(LOCAL_EMBED_MODEL)
-    return _st_model
+def embed_texts(texts: List[str]) -> List[List[float]]:
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    results: List[List[float]] = []
+    for i in range(0, len(texts), 100):
+        batch = texts[i:i + 100]
+        resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=batch)
+        resp.data.sort(key=lambda x: x.index)
+        results.extend(item.embedding for item in resp.data)
+    return results
 
 @functools.lru_cache(maxsize=512)
 def _embed_query_cached(text: str) -> Tuple[float, ...]:
-    """Cache query embeddings so repeated searches cost nothing."""
-    model = get_embed_model()
-    vec = model.encode([text], normalize_embeddings=True)[0]
-    return tuple(float(x) for x in vec)
-
-def embed_texts(texts: List[str]) -> List[List[float]]:
-    model = get_embed_model()
-    vecs = model.encode(texts, normalize_embeddings=True, batch_size=32, show_progress_bar=False)
-    return [v.tolist() for v in vecs]
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=[text])
+    return tuple(resp.data[0].embedding)
 
 # -------------------------
 # In-memory embedding cache (numpy matrix multiply for sub-millisecond search)
@@ -638,7 +632,7 @@ def ingest_document(db: Session, doc: Document) -> Dict[str, Any]:
         vectors = embed_texts(texts)
         for q, vec in zip(q_rows, vectors):
             e = Embedding(question_id=q.id, tenant_id=q.tenant_id,
-                          vector_json=jdumps(vec), model=LOCAL_EMBED_MODEL)
+                          vector_json=jdumps(vec), model=OPENAI_EMBED_MODEL)
             db.add(e)
         db.commit()
 
@@ -650,7 +644,7 @@ def ingest_document(db: Session, doc: Document) -> Dict[str, Any]:
     return {
         "questions_extracted": len(q_rows),
         "embeddings_enabled": True,
-        "embed_model": LOCAL_EMBED_MODEL,
+        "embed_model": OPENAI_EMBED_MODEL,
         "canonical_threshold": CANONICAL_SIM_THRESHOLD,
     }
 
@@ -896,7 +890,7 @@ def health():
         cached = len(_embed_qids)
     return {
         "ok": True,
-        "embed_model": LOCAL_EMBED_MODEL,
+        "embed_model": OPENAI_EMBED_MODEL,
         "cached_embeddings": cached,
         "generation": has_openai(),
     }
